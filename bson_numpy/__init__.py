@@ -3,6 +3,7 @@ from ctypes import *
 from ctypes.util import find_library
 
 import numpy as np
+from numpy import ma
 
 
 class bson_error_t(Structure):
@@ -12,10 +13,27 @@ class bson_error_t(Structure):
 
 bson_error_ptr = POINTER(bson_error_t)
 
-bson_t = c_byte * 512
+
+class bson_t(Structure):
+    _fields_ = [('flags', c_uint32),
+                ('len', c_uint32),
+                ('padding', c_byte * 120)]
+
 bson_ptr = POINTER(bson_t)
 bson_iter_t = c_byte * 80
 bson_iter_ptr = POINTER(bson_iter_t)
+
+
+class bson_writer_t(Structure):
+    pass
+
+bson_writer_ptr = POINTER(bson_writer_t)
+
+
+class bson_reader_t(Structure):
+    pass
+
+bson_reader_ptr = POINTER(bson_reader_t)
 
 libbson = cdll.LoadLibrary(find_library(
     "/Users/emptysquare/.virtualenvs/c-driver/libbson/.libs/libbson-1.0.0.dylib"
@@ -55,6 +73,31 @@ libbson.bson_iter_init.restype = c_bool
 libbson.bson_iter_key.argtypes = [bson_iter_ptr]
 libbson.bson_iter_key.restype = c_char_p
 
+libbson.bson_get_data.argtypes = [bson_ptr]
+libbson.bson_get_data.restype = POINTER(c_uint8)
+
+libbson.bson_new_from_data.argtypes = [POINTER(c_uint8), c_size_t]
+libbson.bson_new_from_data.restype = bson_ptr
+
+libbson.bson_new_from_buffer.argtypes = [POINTER(POINTER(c_uint8)),
+                                         POINTER(c_size_t),
+                                         c_void_p,
+                                         c_void_p]
+libbson.bson_new_from_buffer.restype = bson_ptr
+
+libbson.bson_reader_new_from_data.argtypes = [POINTER(c_uint8), c_size_t]
+libbson.bson_reader_new_from_data.restype = bson_reader_ptr
+
+libbson.bson_reader_read.argtypes = [bson_reader_ptr, POINTER(c_bool)]
+libbson.bson_reader_read.restype = bson_ptr
+
+libbson.bson_writer_new.argtypes = [POINTER(POINTER(c_uint8)),
+                                    POINTER(c_size_t),
+                                    c_size_t,
+                                    c_void_p,
+                                    c_void_p]
+libbson.bson_writer_new.restype = bson_writer_ptr
+
 # TODO: Decimal128, plus other types defined in Monary but not here
 NUMPY_TYPES = {
     'objectid':  np.dtype('<V12'),  # TODO: modern way to express this?
@@ -76,15 +119,38 @@ NUMPY_TYPES = {
 BSON_TYPES = dict([v, k] for k, v in NUMPY_TYPES.items())
 
 
-# TODO: bson_buffer should be bytes, do bson_init_from_buffer here
-def load(bson_buffer, dtype, fields=None):
+def from_bson(bson_buffer, buffer_length, dtype, fields=None):
     ret = []
+    mask = []
     dtype = np.dtype(dtype)  # Convert from list of tuples if necessary.
-    iter_p = pointer(bson_iter_t())
-    libbson.bson_iter_init(iter_p, bson_buffer)
-    while libbson.bson_iter_next(iter_p):
-        field = libbson.bson_iter_key(iter_p)
-        field_type = dtype.fields[field][0]
-        fn = getattr(libbson, 'bson_iter_' + BSON_TYPES[field_type.type])
-        ret.append(fn(iter_p))
-    return np.array([tuple(ret)], dtype=dtype)
+    it = byref(bson_iter_t())
+    eof = c_bool()
+    reader = libbson.bson_reader_new_from_data(bson_buffer,
+                                               c_size_t(buffer_length))
+    assert reader
+
+    field_offsets = dict((field, i) for i, field in enumerate(dtype.fields))
+
+    b = libbson.bson_reader_read(reader, byref(eof))
+    while b:
+        assert libbson.bson_iter_init(it, b)
+        row = []
+        row_mask = []
+        for field, field_type in dtype.fields.items():
+            # All entries in this row are masked out to begin.
+            row.append(field_type[0].type())
+            row_mask.append(1)
+
+        while libbson.bson_iter_next(it):
+            field = libbson.bson_iter_key(it)
+            if field in dtype.fields:
+                field_type = dtype.fields[field][0]
+                fn = getattr(libbson, 'bson_iter_' + BSON_TYPES[field_type.type])
+                row[field_offsets[field]] = fn(it)
+                row_mask[field_offsets[field]] = 0
+
+        ret.append(tuple(row))
+        mask.append(tuple(row_mask))
+        b = libbson.bson_reader_read(reader, byref(eof))
+
+    return ma.array(ret, mask=mask, dtype=dtype)

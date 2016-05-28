@@ -1,10 +1,28 @@
 import unittest
+from ctypes import *
 
 import numpy as np
 import numpy.testing as nptest
+from numpy import ma
 
 import bson_numpy as bn
 from bson_numpy import libbson
+
+
+def create_buffer(docs):
+    """Catenate a sequence of BSON byte buffers into one."""
+    size = sum(doc.contents.len for doc in docs)
+    buf = cast(create_string_buffer(size), POINTER(c_uint8))
+    offset = 0
+    for doc in docs:
+        # Unfortunately hard: http://bugs.python.org/issue6259.
+        buf_ptr = cast(addressof(buf.contents) + offset, POINTER(c_uint8))
+        memmove(buf_ptr,
+                libbson.bson_get_data(doc),
+                c_size_t(doc.contents.len))
+        offset += doc.contents.len
+
+    return buf, size
 
 
 class BSONNumPyTest(unittest.TestCase):
@@ -14,9 +32,20 @@ class BSONNumPyTest(unittest.TestCase):
 
     def test_int32(self):
         dtype = [('a', np.int32), ('b', np.int32)]
-        expected = np.array([(1, 2)], dtype=dtype)
-        doc = libbson.bson_new()
-        libbson.bson_append_int32(doc, 'a', -1, 1)
-        libbson.bson_append_int32(doc, 'b', -1, 2)
-        self.assert_array_eq(bn.load(doc, dtype), expected)
-        libbson.bson_destroy(doc)
+        # The '1' in the mask marks a missing value.
+        expected = ma.array([(1, 2), (0, 3)],
+                            mask=[(0, 0), (1, 0)],
+                            dtype=dtype)
+
+        doc0 = libbson.bson_new()
+        libbson.bson_append_int32(doc0, 'a', -1, 1)
+        libbson.bson_append_int32(doc0, 'b', -1, 2)
+
+        # Lacks 'a', adds 'c'.
+        doc1 = libbson.bson_new()
+        libbson.bson_append_int32(doc1, 'b', -1, 3)
+        libbson.bson_append_int32(doc1, 'c', -1, 4)
+
+        bson_buffer, buffer_length = create_buffer([doc0, doc1])
+        self.assert_array_eq(bn.from_bson(bson_buffer, buffer_length, dtype),
+                             expected)
