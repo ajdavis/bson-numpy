@@ -26,49 +26,38 @@ def create_buffer(docs):
 
 
 class BSONNumPyTest(unittest.TestCase):
+    def setUp(self):
+        doc0 = libbson.bson_new()
+        libbson.bson_append_int32(doc0, 'a', -1, 1)
+        libbson.bson_append_int32(doc0, 'b', -1, 2)
+
+        # Lacks 'a', adds 'c'.
+        doc1 = libbson.bson_new()
+        libbson.bson_append_int32(doc1, 'b', -1, 3)
+        libbson.bson_append_int32(doc1, 'c', -1, 4)
+        self.docs = [doc0, doc1]
+        self.dtype = [('a', np.int32), ('b', np.int32)]
+
+        # The '1' in the mask marks a missing value.
+        self.expected_array = ma.array([(1, 2), (0, 3)],
+                                       mask=[(0, 0), (1, 0)],
+                                       dtype=self.dtype)
+
     def assert_array_eq(self, actual, expected, err_msg=''):
         nptest.assert_array_equal(actual, expected, err_msg=err_msg)
         self.assertEqual(actual.dtype, expected.dtype)
 
     def test_bson_buffer(self):
-        dtype = [('a', np.int32), ('b', np.int32)]
-        # The '1' in the mask marks a missing value.
-        expected = ma.array([(1, 2), (0, 3)],
-                            mask=[(0, 0), (1, 0)],
-                            dtype=dtype)
-
-        doc0 = libbson.bson_new()
-        libbson.bson_append_int32(doc0, 'a', -1, 1)
-        libbson.bson_append_int32(doc0, 'b', -1, 2)
-
-        # Lacks 'a', adds 'c'.
-        doc1 = libbson.bson_new()
-        libbson.bson_append_int32(doc1, 'b', -1, 3)
-        libbson.bson_append_int32(doc1, 'c', -1, 4)
-
-        buf, buf_len = create_buffer([doc0, doc1])
-        self.assert_array_eq(bn.from_bson_buffer(buf, buf_len, dtype), expected)
+        buf, buf_len = create_buffer(self.docs)
+        self.assert_array_eq(bn.from_bson_buffer(buf, buf_len, self.dtype),
+                             self.expected_array)
 
     def test_bson_array(self):
-        dtype = [('a', np.int32), ('b', np.int32)]
-        # The '1' in the mask marks a missing value.
-        expected = ma.array([(1, 2), (0, 3)],
-                            mask=[(0, 0), (1, 0)],
-                            dtype=dtype)
-
-        doc0 = libbson.bson_new()
-        libbson.bson_append_int32(doc0, 'a', -1, 1)
-        libbson.bson_append_int32(doc0, 'b', -1, 2)
-
-        # Lacks 'a', adds 'c'.
-        doc1 = libbson.bson_new()
-        libbson.bson_append_int32(doc1, 'b', -1, 3)
-        libbson.bson_append_int32(doc1, 'c', -1, 4)
-
         bson_array = libbson.bson_new()
-        assert libbson.bson_append_document(bson_array, "0", -1, doc0)
-        assert libbson.bson_append_document(bson_array, "1", -1, doc1)
+        for i, doc in enumerate(self.docs):
+            assert libbson.bson_append_document(bson_array, str(i), -1, doc)
 
         buf = libbson.bson_get_data(bson_array)
         self.assert_array_eq(
-            bn.from_bson_array(buf, bson_array.contents.len, dtype), expected)
+            bn.from_bson_array(buf, bson_array.contents.len, self.dtype),
+            self.expected_array)
