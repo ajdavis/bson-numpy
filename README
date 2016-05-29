@@ -1,0 +1,4 @@
+bson-numpy-codec
+================
+
+Fast conversion between NumPy arrays and BSON, MongoDB's native data format.
