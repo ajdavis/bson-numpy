@@ -2,7 +2,7 @@ import setuptools
 import sys
 
 
-test_requires = []
+test_requires = ["pymongo"]
 test_suite = "tests"
 if sys.version_info[:2] == (2, 6):
     test_requires.append("unittest2")

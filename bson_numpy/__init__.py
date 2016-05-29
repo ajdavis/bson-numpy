@@ -44,7 +44,7 @@ libbson.bson_strdup.restype = c_char_p
 
 libbson.bson_new.restype = bson_ptr
 
-for type_name in ['int32']:
+for type_name in ['double', 'int32']:
     ctypes_type = getattr(ctypes, 'c_' + type_name)
 
     # E.g., bool bson_append_int32 (bson_t *, char *key, int key_len, int32_t).
@@ -124,6 +124,12 @@ NUMPY_TYPES = {
 
 BSON_TYPES = dict([v, k] for k, v in NUMPY_TYPES.items())
 
+ITER_FUNCS = {
+    np.float64:  libbson.bson_iter_double,
+    np.int32:    libbson.bson_iter_int32,
+    # TODO: the rest
+}
+
 
 def from_bson_buffer(buf, buf_len, dtype, fields=None):
     """Convert from buffer of catenated BSON documents to NumPy array."""
@@ -151,7 +157,7 @@ def from_bson_buffer(buf, buf_len, dtype, fields=None):
             field = libbson.bson_iter_key(it)
             if field in dtype.fields:
                 field_type = dtype.fields[field][0]
-                fn = getattr(libbson, 'bson_iter_' + BSON_TYPES[field_type.type])
+                fn = ITER_FUNCS[field_type.type]
                 row[field_offsets[field]] = fn(it)
                 row_mask[field_offsets[field]] = 0
 
